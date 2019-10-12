@@ -26,6 +26,9 @@ netsh interface ipv4 show address
 netsh interface ipv4 show dnsservers
 netsh advfirewall show allprofiles state
 
+(Get-WmiObject Win32_ComputerSystem).Name
+(Get-WmiObject Win32_ComputerSystem).Domain
+
 # Disable IPv6 on interface adapter
 Get-NetAdapterBinding
 Dsiable-NetAdapterBinding -Name <adapter> -ComponentID ms_tcpip6

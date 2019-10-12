@@ -1,3 +1,8 @@
+# NOTE: Ensure WinRM service is running on source machine
+# NOTE: Must use the ip/name that was set in TrustedHosts
+#       If ip was used, cannot use the hostname; and vice-versa
+# Run "Enable-PSRemoting" or "winrm quickconfig"
+
 # Add target machine to TrustedHosts for WinRM
 Set-Item WSMan:\localhost\Client\TrustedHosts "<ip>" (-Force)
 

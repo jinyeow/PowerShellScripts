@@ -1,3 +1,22 @@
+# NOTE: List of NanoServer packages:
+#   - Microsoft-NanoServer-Compute-Package
+#   - Microsoft-NanoServer-Containers-Package
+#   - Microsoft-NanoServer-DCB-Package
+#   - Microsoft-NanoServer-Defender-Package
+#   - Microsoft-NanoServer-DNS-Package
+#   - Microsoft-NanoServer-DSC-Package
+#   - Microsoft-NanoServer-FailoverCluster-Package
+#   - Microsoft-NanoServer-Guest-Package
+#   - Microsoft-NanoServer-Host-Package
+#   - Microsoft-NanoServer-IIS-Package
+#   - Microsoft-NanoServer-OEM-Drivers-Package
+#   - Microsoft-NanoServer-SCVMM-Compute-Package
+#   - Microsoft-NanoServer-SCVMM-Package
+#   - Microsoft-NanoServer-SecureStartup-Package
+#   - Microsoft-NanoServer-ShieldedVM-Package
+#   - Microsoft-NanoServer-SoftwareInventoryLogging-Package
+#   - Microsoft-NanoServer-Storage-Package
+
 # Import nano server PS into session
 Import-Module D:\NanoServer\NanoServerImageGenerator -Verbose
 
@@ -16,9 +35,9 @@ New-VM -Name <name> `
        -MemoryStartupBytes 1GB `
        -Generation <1|2> | Start-VM
 
-# Create nano server web server
-New-NanoServerImage -MediaPath <installation\media\path> `
-                    -BasePath <base\path> `
+# Create nano server web server (example)
+New-NanoServerImage -MediaPath <D:> `
+                    -BasePath <C:\Temp> `
                     -TargetPath <target.vhdx> `
                     -DeploymentType Guest `
                     -Edition Datacenter `
@@ -29,7 +48,7 @@ New-NanoServerImage -MediaPath <installation\media\path> `
                     -Ipv4Gateway <gateway> `
                     -Ipv4Dns ("<dns1>","<dns2>") `
                     -Package Microsoft-NanoServer-IIS-Package `
-                    -AdministratorPassword (ConvertTo-String -String 'Pa$$w0rd' -AsPlainText -Force)
+                    -AdministratorPassword (ConvertTo-SecureString -String 'Pa$$w0rd' -AsPlainText -Force)
 
 # View available packages
 Get-NanoServerPackage -MediaPath <path\to\media>
