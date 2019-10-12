@@ -85,10 +85,15 @@ Install-WindowsFeature AD-Domain-Services,DNS
     -IncludeAllSubFeature
 
 # 10. Setup domain
-Install-ADDSDomainController
-    -DomainName <domain.local>
+# Install initial domain
+Install-ADDSForest -InstallDns:$true `
+                   -DomainName <domain.name> `
+                   -DomainNetbiosName <DOMAIN>
+# Promote server to DC
+Install-ADDSDomainController `
+    -DomainName <domain.name> `
     -Credential $(Get-Credential)
-Install-ADDSForest -DomainName <domain.local>
+
 # Make sure AD/DNS services are running
 Get-Service adws,kdc,netlogon,dns
 sc query {adws,kdc,netlogon,dns}
@@ -97,6 +102,9 @@ Get-SmbShare
 # Review logs
 Get-EventLog "Directory Service" | Select entrytype, source, eventid, Message
 Get-EventLog "Active Directory Web Services" | select entrytype, source, eventid, message
+Get-ADDomainController
+Get-ADDomain <DOMAIN>
+Get-ADForest <domain.name>
 
 # EXTRA
 # Set Remote Management service to start automatically
