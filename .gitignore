@@ -1,0 +1,11 @@
+# Git related
+**/.worktrees
+.worktrees
+
+# Pester test artifacts
+**/.testResults
+**/testResults.xml
+**/coverage.xml
+**/TestResults.xml
+TestResults.xml
+CodeCoverage.xml
