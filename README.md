@@ -19,7 +19,7 @@ This repository contains PowerShell scripts and modules developed for various ad
   - `Az` (Azure PowerShell)
   - `Microsoft.Graph` (Microsoft Graph API)
   - Azure CLI (`az`) installed and configured
-  
+
 Install required modules:
 ```powershell
 Install-Module -Name Az -AllowClobber -Scope CurrentUser
@@ -30,7 +30,7 @@ Install-Module -Name Microsoft.Graph -Scope CurrentUser
 
 ```
 PowerShellScripts/
-├── 
+├──
 ├── Modules/              # Custom PowerShell modules
 │   ├── Common/           # General scripts
 │   ├── EntraID/          # Permission management module
@@ -187,7 +187,7 @@ See [AUTHORS.md](AUTHORS.md) for contributor information.
 
 ## License
 
-This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
 
 ## Support
 
