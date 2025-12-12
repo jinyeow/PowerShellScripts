@@ -1,0 +1,118 @@
+# TODO: check all the FILLME and Codedapper for the Artifact feed name. Update as required.
+parameters:
+- name: additionalSparseCheckoutDirectories
+  type: string
+  default: ''
+- name: azureServiceConnection
+  type: string
+- name: moduleName
+  type: string
+- name: testResultsOutFile
+  type: string
+  default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+
+variables:
+  ARTIFACT_FEED_NAME: 'Codedapper.DevOps.PowerShell'
+  ARTIFACT_FEED: '<FILLME>/${{ variables.ARTIFACT_FEED_NAME }}' # TODO
+  AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
+  CI_IDENTIFIER: 'CI'
+  CODE_COVERAGE_THRESHOLD: 10
+  MODULE_NAME: '${{ parameters.moduleName }}'
+  SPARSE_CHECKOUT_DIRECTORIES: '${{ variables.MODULE_NAME }} ${{ parameters.additionalSparseCheckoutDirectories }}'
+  TEST_RESULTS: '${{ parameters.testResultsOutFile }}'
+
+stages:
+- stage: Deployment
+  jobs:
+  - job: deploy
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    displayName: Powershell Modules Deployment
+    steps:
+    - checkout: none
+
+    - download: CI
+      artifact: "${{ variables.MODULE_NAME }}"
+
+    - task: NuGetToolInstaller@1
+      inputs:
+        versionSpec: '*'
+        checkLatest: true
+
+    - task: PowerShell@2
+      displayName: 'Publish PowerShell Module to Azure Artifacts'
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      inputs:
+        targetType: 'inline'
+        script: |
+          $accessToken = $env:SYSTEM_ACCESSTOKEN
+          $feedName = "${{ variables.ARTIFACT_FEED_NAME }}"
+          $moduleName = "${{ variables.MODULE_NAME }}"
+          $pkg = (Get-ChildItem *.nupkg).Name
+          $sourceUri = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/$($feedName)/nuget/v3/index.json" # TODO
+
+          Write-Debug $sourceUri
+          Write-Debug $pkg
+
+          $nugetAddParams = @(
+            '-Name', 'Codedapper.DevOps.PowerShell',
+            '-Source', $sourceUri,
+            '-username', $accessToken,
+            '-password', $accessToken
+          )
+          nuget source add @nugetAddParams
+          nuget push -Source "Codedapper.DevOps.PowerShell" -ApiKey AzureDevOpsService  "./$pkg" -SkipDuplicate
+        workingDirectory: '$(Pipeline.Workspace)/${{ variables.CI_IDENTIFIER }}/${{ variables.MODULE_NAME }}'
+
+- stage: PostDeploy
+  dependsOn: Deployment
+  displayName: 'Post Deployment Tasks'
+  jobs:
+  - job: Test
+    displayName: 'Test deployed PowerShell module'
+    steps:
+    - checkout: none
+
+    - task: NuGetToolInstaller@1
+      inputs:
+        versionSpec: '*'
+        checkLatest: true
+
+    - task: AzurePowerShell@5
+      env:
+        PROJECT_ID: $(System.TeamProjectId)
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      displayName: '[DevTest] - Install ${{ variables.MODULE_NAME }} Module from Feed'
+      inputs:
+        azurePowerShellVersion: 'LatestVersion'
+        azureSubscription: '${{ variables.AZURE_SERVICE_CONNECTION }}'
+        FailOnStandardError: true
+        pwsh: true
+        ScriptType: 'InlineScript'
+        Inline:  |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 #1
+          $token = $env:SYSTEM_ACCESSTOKEN | ConvertTo-SecureString -AsPlainText -Force #2
+          $credential = New-Object System.Management.Automation.PSCredential($env:SYSTEM_ACCESSTOKEN, $token) #3
+          $sourceName = "Codedapper.DevOps.PowerShell" #4
+          $feedLocation = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/Codedapper.DevOps.PowerShell/nuget/v2" #5 #TODO
+
+          Write-Host "##[section]Register Package Source"
+          $params = @{
+            Name = $sourceName
+            ProviderName = "PowerShellGet"
+            Location = $feedLocation
+            Trusted = $true
+            Credential = $credential
+            Force = $true
+          }
+          Register-PackageSource @params #6
+
+          Write-Host "##[section]Install Module"
+          $moduleName = "${{ variables.MODULE_NAME }}" #7
+          Install-Module -Name $moduleName -Repository $sourceName -Force -Credential $credential
+
+          if (-not (Get-Module -ListAvailable -Name $moduleName)) {
+            Write-Error "Module [$moduleName] not imported."
+          } else {
+            Write-Host "Module '$moduleName' imported successfully - v$($(Get-Module -ListAvailable -Name $moduleName).Version)"
+          }
