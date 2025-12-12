@@ -1,0 +1,167 @@
+parameters:
+- name: additionalSparseCheckoutDirectories
+  type: string
+  default: ''
+- name: azureServiceConnection
+  type: string
+- name: moduleName
+  type: string
+- name: testResultsOutFile
+  type: string
+  default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+
+variables:
+  ARTIFACT_FEED: '<FILLME>/Hollard.DevOps.PowerShell' # TODO
+  AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
+  CODE_COVERAGE_THRESHOLD: 10
+  MODULE_NAME: '${{ parameters.moduleName }}'
+  SPARSE_CHECKOUT_DIRECTORIES: '${{ variables.MODULE_NAME }} ${{ parameters.additionalSparseCheckoutDirectories }} .vscode'
+  TEST_RESULTS: '${{ parameters.testResultsOutFile }}'
+
+stages:
+- stage: CI
+  displayName: 'Run Pester Tests'
+  jobs:
+  - job: Test
+    displayName: 'Test PowerShell Module'
+    steps:
+    - checkout: self
+      displayName: '[Sparse] Checkout self'
+      fetchDepth: 1
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }}
+
+    - task: PowerShell@2
+      displayName: 'PSScriptAnalyzer'
+      inputs:
+        pwsh: true
+        failOnStderr: true
+        targetType: 'inline'
+        script:  |
+          Install-Module -Name PSScriptAnalyzer -Force
+          Import-Module PSScriptAnalyzer
+          $params = @{
+            Path = '${{ variables.MODULE_NAME }}/src'
+            Recurse = $true
+            Settings = '.vscode/PSScriptAnalyzerSettings.psd1'
+            ReportSummary = $true
+            EnableExit = $true
+            IncludeSuppressed = $true
+          }
+          Invoke-ScriptAnalyzer @params
+
+    - task: AzurePowerShell@5
+      displayName: 'Run Pester Tests'
+      inputs:
+        azurePowerShellVersion: 'LatestVersion'
+        azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+        pwsh: true
+        ScriptType: 'InlineScript'
+        workingDirectory: $(MODULE_NAME)
+        Inline:  |
+          $graphToken = (Get-AzAccessToken -Resource 'https://graph.microsoft.com').Token |
+            ConvertTo-SecureString -AsPlainText
+          Connect-MgGraph -AccessToken $graphToken -NoWelcome
+
+          # Install and import Pester if not already installed
+          $requiredVersion = '5.0.0'
+          $pesterModule = Get-Module -ListAvailable -Name Pester | Select-Object -First 1
+          if (-not ($pesterModule) -or ($pesterModule.Version -lt $requiredVersion)) {
+              Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          Import-Module Pester -MinimumVersion $requiredVersion -Force
+
+          $config = New-PesterConfiguration
+
+          # Test paths
+          $config.Run.Path = "./tests"
+          $config.Run.PassThru = $true
+
+          # Code Coverage settings
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.OutputFormat = 'JaCoCo'
+          $config.CodeCoverage.OutputPath = 'coverage.xml'
+          $config.CodeCoverage.Path = './src'
+          $config.CodeCoverage.CoveragePercentTarget = ${{ variables.CODE_COVERAGE_THRESHOLD }}
+
+          $config.Output.Verbosity = "Detailed"
+
+          # Test Result output
+          $config.TestResult.Enabled = $true
+          $config.Run.Exit = $true
+          $config.TestResult.OutputFormat = "NUnitXml"
+          $config.TestResult.OutputPath = "$(TEST_RESULTS)"
+          $config
+          Invoke-Pester -Configuration $config
+
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      displayName: 'Publish Pester Test Results'
+      inputs:
+        failTaskOnFailedTests: true
+        testResultsFiles: '$(TEST_RESULTS)'
+        testResultsFormat: 'NUnit'
+        testRunTitle: 'Pester Tests'
+
+    - task: PublishCodeCoverageResults@2
+      condition: succeededOrFailed()
+      displayName: 'Publish Code Coverage'
+      inputs:
+        failIfCoverageEmpty: true
+        summaryFileLocation: '**/coverage.xml'
+
+  - job: Build
+    displayName: 'Build PowerShell Module'
+    steps:
+    - checkout: self
+      displayName: '[Sparse] Checkout self'
+      fetchDepth: 1
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Utility
+
+    - pwsh: |
+        $moduleName = '${{ variables.MODULE_NAME }}'
+        ./Utility/New-NuspecFromPsd.ps1 -ManifestPath "${moduleName}/src/${moduleName}.psd1" -DestinationFolder "${moduleName}/src"
+
+        Write-Host "##[section]Reading generated nuspec:"
+        Get-Content "${moduleName}/src/${moduleName}.nuspec"
+      displayName: 'Generate nuspec from ${{ variables.MODULE_NAME }}.psd1'
+
+    - task: NuGetToolInstaller@1
+      inputs:
+        checkLatest: true
+        versionSpec: '*'
+
+    - task: AzurePowerShell@5
+      displayName: 'nuget pack'
+      inputs:
+        azurePowerShellVersion: 'LatestVersion'
+        azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+        FailOnStandardError: true
+        pwsh: true
+        ScriptType: 'InlineScript'
+        workingDirectory: $(MODULE_NAME)
+        Inline:  |
+          nuget pack "src/${{ variables.MODULE_NAME }}.nuspec" -BasePath ./src -OutputDirectory '$(Build.ArtifactStagingDirectory)'
+          ls $(Build.ArtifactStagingDirectory)
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: "${{ variables.MODULE_NAME }}.nupkg"
+
+  - job: PublishBuildArtifact
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), and(startsWith(variables['Build.SourceBranch'], 'refs/pull/'), endsWith(variables['Build.SourceBranch'], '/merge'))))
+    dependsOn:
+      - Test
+      - Build
+    displayName: 'Publish Build Artifact'
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: "${{ variables.MODULE_NAME }}.nupkg"
+        path: '$(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'publish build artifact'
+      inputs:
+        ArtifactName: '${{ variables.MODULE_NAME }}'
+        PathtoPublish:  '$(Build.ArtifactStagingDirectory)'

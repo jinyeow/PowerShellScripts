@@ -1,3 +1,6 @@
+Write-Host "!!! This script is not to be run as is. Read the below and fill out the appropriate variables."
+return
+
 # PowerShell script outlining setting up a Domain Controller from scratch
 # using Powershell/cmd
 #
@@ -31,18 +34,21 @@ netsh advfirewall show allprofiles state
 
 # Disable IPv6 on interface adapter
 Get-NetAdapterBinding
-Dsiable-NetAdapterBinding -Name <adapter> -ComponentID ms_tcpip6
+Dsiable-NetAdapterBinding -Name $Adapter -ComponentID ms_tcpip6
 
 # Join a domain
-Add-Computer -DomainName <domain>
-netdom join %computername% /domain:<domain> /userd:<admin> /passwordd:<pw>
+Add-Computer -DomainName $Domain
+netdom join %computername% /domain:$Domain /userd:$Username /passwordd:$Password
 
 # 1. Set static IP
-New-NetIPAddress -InterfaceAlias <alias>
-    -IPAddress <ip>
-    -PrefixLength 24
-    -DefaultGateway <gw ip>
-netsh interface ipv4 set address <adapter> static <ip> <subnet mask> <gateway>
+$params = @{
+    InterfaceAlias = $Alias
+    IPAddress = $IP
+    PrefixLength = 24
+    DefaultGateway = $GatewayIP
+}
+New-NetIPAddress @params
+netsh interface ipv4 set address $Adapter static $IP $PrefixLength $GatewayIP
 
 # 2. Set static DNS
 Set-DnsClientServerAddress -InterfaceIndex <id> -ServerAddresses <dns1>,<dns2>
@@ -50,7 +56,7 @@ netsh interface ipv4 set dnsservers <adapter> <static|dhcp> <ip>
 netsh interface ipv4 add dnsservers <adapter> <ip> index=<index>
 
 # 3. Disable firewall
-Set-NetFirewallProfile -Profile domain,private,public -Enabled False
+Set-NetFirewallProfile -Profile domain, private, public -Enabled False
 netsh advfirewall set allprofiles state off
 
 # 4. Rename computer
@@ -65,11 +71,22 @@ Restart-Computer
 shutdown /r /t <seconds> /c <comment> (/m <\\computer>)
 
 # 6. Enable Remote Desktop
-Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\' -Name "fDenyTSConnections" -Value 0
-Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\' -Name "UserAuthentication" -Value 1
+$params = @{
+    Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\'
+    Name = 'fDenyTSConnections'
+    Value = 0
+}
+Set-ItemProperty @params
+$params = @{
+    Path = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\'
+    Name = 'UserAuthentication'
+    Value = 1
+}
+Set-ItemProperty @params
 Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
 # Grant permissions for users by adding to localgroup "Remote Desktop Users"
-Add-LocalGroupMember -Group "Remote Desktop Users" -Member <user>
+Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username
 
 # 7. Set TimeZone
 Get-TimeZone -ListAvailable
@@ -80,31 +97,27 @@ $AutoUpdates = New-Object -ComObject "Microsoft.Update.AutoUpdate"
 $AutoUpdates.DetectNow()
 
 # 9. Install ADDS,DNS
-Install-WindowsFeature AD-Domain-Services,DNS
-    -IncludeManagementTools
-    -IncludeAllSubFeature
+Install-WindowsFeature AD-Domain-Services, DNS -IncludeManagementTools -IncludeAllSubFeature
 
 # 10. Setup domain
 # Install initial domain
-Install-ADDSForest -InstallDns:$true `
-                   -DomainName <domain.name> `
-                   -DomainNetbiosName <DOMAIN>
+Install-ADDSForest -InstallDns:$true -DomainName $DomainName -DomainNetbiosName $Domain
 # Promote server to DC
-Install-ADDSDomainController `
-    -DomainName <domain.name> `
-    -Credential $(Get-Credential)
+Install-ADDSDomainController -DomainName $DomainName -Credential $(Get-Credential)
 
 # Make sure AD/DNS services are running
-Get-Service adws,kdc,netlogon,dns
-sc query {adws,kdc,netlogon,dns}
+# sc query {adws,kdc,netlogon,dns}
+Get-Service adws, kdc, netlogon, dns
+
 # Check for sysvol and netlogon shares
 Get-SmbShare
+
 # Review logs
-Get-EventLog "Directory Service" | Select entrytype, source, eventid, Message
-Get-EventLog "Active Directory Web Services" | select entrytype, source, eventid, message
+Get-EventLog "Directory Service" | Select-Object entrytype, source, eventid, Message
+Get-EventLog "Active Directory Web Services" | Select-Object entrytype, source, eventid, message
 Get-ADDomainController
-Get-ADDomain <DOMAIN>
-Get-ADForest <domain.name>
+Get-ADDomain $Domain
+Get-ADForest $DomainName
 
 # EXTRA
 # Set Remote Management service to start automatically
