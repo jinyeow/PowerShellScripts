@@ -13,21 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CHANGELOG.md for version tracking
 - AUTHORS.md for contributor recognition
 
-## [0.2.0] - 2024-12-12
-
-### Added
-- Hollard.Permissions module for Azure DevOps permission management
-- `Get-AdoProjectGroupMember` function for retrieving group members
-- `Invoke-AzCli` helper function for Azure CLI command execution
-
-### Changed
-- Improved error handling in Azure DevOps scripts
-- Enhanced authentication flow for Azure CLI commands
-
-### Fixed
-- Environment variable propagation in `Invoke-AzCli` process execution
-- Authentication issues with Azure DevOps PAT tokens
-
 ## [0.1.0] - Initial Release
 
 ### Added
