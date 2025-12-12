@@ -57,12 +57,12 @@ PowerShellScripts/
 
 2. **Import a module**:
    ```powershell
-   Import-Module .\Modules\Hollard.Permissions\Hollard.Permissions.psd1
+   Import-Module .\Modules\Codedapper.Common\Codedapper.Common.psd1
    ```
 
 3. **List available commands**:
    ```powershell
-   Get-Command -Module Hollard.Permissions
+   Get-Command -Module Codedapper.Common
    ```
 
 ### Using Standalone Scripts
