@@ -1,0 +1,186 @@
+# Builds, tests and publishes the PowerShell modules in this monorepo to
+# GitHub Packages (the repo owner's NuGet registry) using PSResourceGet.
+#
+#   - PR to main   -> prerelease version  <psd1 version>-pr<PR>b<runId>
+#   - push to main -> release version     <psd1 version>
+#
+# Only modules whose files changed are built. A top-level directory counts as a
+# module when it contains <ModuleName>/<ModuleName>.psd1.
+#
+# Auth: GITHUB_TOKEN (packages: write). PRs from forks get a read-only token, so
+# publish/smoke jobs are skipped for them. Modules that set requiresAzureAuth in
+# ci.settings.json additionally need the AZURE_CLIENT_ID / AZURE_TENANT_ID /
+# AZURE_SUBSCRIPTION_ID secrets for OIDC login (see .pipelines/README.md).
+
+name: publish-modules
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  FEED_URI: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+  COVERAGE_THRESHOLD: '10'
+
+jobs:
+  detect:
+    name: Detect changed modules
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.detect.outputs.modules }}
+      has-modules: ${{ steps.detect.outputs.hasModules }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        name: Diff against base and list changed modules
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'pull_request') {
+            $baseRef = 'origin/${{ github.base_ref }}'
+          } else {
+            # github.event.before is all zeros on the first push to a branch.
+            $before = '${{ github.event.before }}'
+            git cat-file -e "$before^{commit}" 2>$null
+            $baseRef = if ($before -and $before -notmatch '^0+$' -and $LASTEXITCODE -eq 0) { $before } else { 'HEAD^' }
+          }
+
+          $json = ./.pipelines/scripts/Get-ChangedModule.ps1 -BaseRef $baseRef
+          $modules = @($json | ConvertFrom-Json)
+          Write-Host "Changed modules: $(if ($modules) { $modules.moduleName -join ', ' } else { '(none)' })"
+
+          "modules=$json" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "hasModules=$(($modules.Count -gt 0).ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+  validate:
+    name: Validate ${{ matrix.module.moduleName }}
+    needs: detect
+    if: needs.detect.outputs.has-modules == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (module opted into Azure-authenticated tests)
+        if: matrix.module.requiresAzureAuth
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: ./.pipelines/scripts/Invoke-ModuleAnalysis.ps1 -ModulePath ./${{ matrix.module.moduleName }}
+
+      - name: Pester tests
+        shell: pwsh
+        env:
+          REQUIRES_AZURE_AUTH: ${{ matrix.module.requiresAzureAuth }}
+        run: |
+          if ($env:REQUIRES_AZURE_AUTH -eq 'true') {
+            if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
+              Install-PSResource -Name Microsoft.Graph.Authentication -TrustRepository -Scope CurrentUser
+            }
+            $graphToken = (Get-AzAccessToken -ResourceUrl 'https://graph.microsoft.com').Token |
+              ConvertTo-SecureString -AsPlainText -Force
+            Connect-MgGraph -AccessToken $graphToken -NoWelcome
+          }
+
+          $params = @{
+            ModulePath         = './${{ matrix.module.moduleName }}'
+            TestResultsPath    = './TestResults-${{ matrix.module.moduleName }}.xml'
+            CoverageOutputPath = './coverage-${{ matrix.module.moduleName }}.xml'
+            CoverageThreshold  = [int] $env:COVERAGE_THRESHOLD
+          }
+          ./.pipelines/scripts/Invoke-ModuleTests.ps1 @params
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.module.moduleName }}
+          path: |
+            TestResults-${{ matrix.module.moduleName }}.xml
+            coverage-${{ matrix.module.moduleName }}.xml
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish ${{ matrix.module.moduleName }}
+    needs: [detect, validate]
+    # Fork PRs get a read-only GITHUB_TOKEN and cannot publish packages.
+    if: >-
+      needs.detect.outputs.has-modules == 'true' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish to GitHub Packages
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $version = ./.pipelines/scripts/Get-ModulePublishVersion.ps1 `
+            -ModulePath ./${{ matrix.module.moduleName }} `
+            -PullRequestNumber $env:PR_NUMBER -BuildId '${{ github.run_id }}' |
+            ConvertFrom-Json
+
+          $params = @{
+            ModulePath    = './${{ matrix.module.moduleName }}'
+            RepositoryUri = $env:FEED_URI
+            Token         = $env:GITHUB_TOKEN
+            Username      = '${{ github.actor }}'
+          }
+          if ($version.prereleaseLabel) { $params.PrereleaseLabel = $version.prereleaseLabel }
+          ./.pipelines/scripts/Publish-PSModule.ps1 @params
+
+  smoke-test:
+    name: Smoke test ${{ matrix.module.moduleName }}
+    needs: [detect, publish]
+    if: needs.detect.outputs.has-modules == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.detect.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and import from GitHub Packages
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $version = ./.pipelines/scripts/Get-ModulePublishVersion.ps1 `
+            -ModulePath ./${{ matrix.module.moduleName }} `
+            -PullRequestNumber $env:PR_NUMBER -BuildId '${{ github.run_id }}' |
+            ConvertFrom-Json
+
+          $params = @{
+            ModuleName    = '${{ matrix.module.moduleName }}'
+            Version       = $version.fullVersion
+            RepositoryUri = $env:FEED_URI
+            Token         = $env:GITHUB_TOKEN
+            Username      = '${{ github.actor }}'
+          }
+          ./.pipelines/scripts/Test-PublishedPSModule.ps1 @params

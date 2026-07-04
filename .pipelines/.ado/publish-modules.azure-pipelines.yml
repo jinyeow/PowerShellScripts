@@ -1,0 +1,226 @@
+# Builds, tests and publishes the PowerShell modules in this monorepo to an
+# Azure Artifacts feed using PSResourceGet.
+#
+#   - PR to main   -> prerelease version  <psd1 version>-pr<PR>b<buildId>
+#   - push to main -> release version     <psd1 version>
+#
+# Only modules whose files changed are built. A top-level directory counts as a
+# module when it contains <ModuleName>/<ModuleName>.psd1.
+#
+# Required setup (see .pipelines/README.md):
+#   - Variable group 'powershell-module-publishing' with:
+#       ADO_ORGANIZATION    e.g. myorg          (from https://dev.azure.com/myorg)
+#       ADO_PROJECT         e.g. MyProject      (project hosting the feed)
+#       ARTIFACT_FEED_NAME  e.g. Codedapper.DevOps.PowerShell
+#   - The build service identity needs Contributor on the feed.
+
+name: publish-modules-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+parameters:
+  - name: azureServiceConnection
+    displayName: 'Azure service connection (only needed for modules with requiresAzureAuth in ci.settings.json)'
+    type: string
+    default: ''
+
+variables:
+  - group: powershell-module-publishing
+  - name: FEED_URI
+    value: 'https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(ADO_PROJECT)/_packaging/$(ARTIFACT_FEED_NAME)/nuget/v3/index.json'
+  - name: COVERAGE_THRESHOLD
+    value: '10'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+jobs:
+  - job: Detect
+    displayName: 'Detect changed modules'
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - pwsh: |
+          if ('$(Build.Reason)' -eq 'PullRequest') {
+            $baseBranch = '$(System.PullRequest.TargetBranch)' -replace '^refs/heads/', ''
+            git fetch origin $baseBranch
+            $baseRef = "origin/$baseBranch"
+          } else {
+            $baseRef = 'HEAD^'
+          }
+
+          $json = ./.pipelines/scripts/Get-ChangedModule.ps1 -BaseRef $baseRef
+          $modules = @($json | ConvertFrom-Json)
+          Write-Host "Changed modules: $(if ($modules) { $modules.moduleName -join ', ' } else { '(none)' })"
+
+          $matrix = [ordered]@{}
+          foreach ($m in $modules) {
+            $matrix[$m.moduleName] = @{
+              moduleName        = $m.moduleName
+              requiresAzureAuth = "$($m.requiresAzureAuth)".ToLower()
+            }
+          }
+          $matrixJson = ConvertTo-Json -InputObject $matrix -Compress
+          Write-Host "##vso[task.setvariable variable=moduleMatrix;isOutput=true]$matrixJson"
+          Write-Host "##vso[task.setvariable variable=hasModules;isOutput=true]$(($modules.Count -gt 0).ToString().ToLower())"
+        name: detect
+        displayName: 'Diff against base and build module matrix'
+
+  - job: Validate
+    displayName: 'Validate'
+    dependsOn: Detect
+    condition: and(succeeded(), eq(dependencies.Detect.outputs['detect.hasModules'], 'true'))
+    strategy:
+      matrix: $[ dependencies.Detect.outputs['detect.moduleMatrix'] ]
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      # Modules opt into Azure-authenticated tests via ci.settings.json; that only
+      # works when the pipeline was given a service connection.
+      - ${{ if eq(parameters.azureServiceConnection, '') }}:
+          - pwsh: |
+              if ('$(requiresAzureAuth)' -eq 'true') {
+                Write-Host "##vso[task.logissue type=error]Module '$(moduleName)' requires Azure-authenticated tests but the azureServiceConnection parameter is empty."
+                exit 1
+              }
+            displayName: 'Check Azure auth prerequisites'
+
+      - pwsh: ./.pipelines/scripts/Invoke-ModuleAnalysis.ps1 -ModulePath ./$(moduleName)
+        displayName: 'PSScriptAnalyzer'
+
+      - pwsh: |
+          $params = @{
+            ModulePath         = './$(moduleName)'
+            TestResultsPath    = '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+            CoverageOutputPath = '$(Build.ArtifactStagingDirectory)/coverage.xml'
+            CoverageThreshold  = $(COVERAGE_THRESHOLD)
+          }
+          ./.pipelines/scripts/Invoke-ModuleTests.ps1 @params
+        displayName: 'Pester tests'
+        condition: and(succeeded(), ne(variables['requiresAzureAuth'], 'true'))
+
+      - ${{ if ne(parameters.azureServiceConnection, '') }}:
+          - task: AzurePowerShell@5
+            displayName: 'Pester tests (Azure authenticated)'
+            condition: and(succeeded(), eq(variables['requiresAzureAuth'], 'true'))
+            inputs:
+              azurePowerShellVersion: 'LatestVersion'
+              azureSubscription: '${{ parameters.azureServiceConnection }}'
+              pwsh: true
+              ScriptType: 'InlineScript'
+              Inline: |
+                if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
+                  Install-PSResource -Name Microsoft.Graph.Authentication -TrustRepository -Scope CurrentUser
+                }
+                $graphToken = (Get-AzAccessToken -ResourceUrl 'https://graph.microsoft.com').Token |
+                  ConvertTo-SecureString -AsPlainText -Force
+                Connect-MgGraph -AccessToken $graphToken -NoWelcome
+
+                $params = @{
+                  ModulePath         = './$(moduleName)'
+                  TestResultsPath    = '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+                  CoverageOutputPath = '$(Build.ArtifactStagingDirectory)/coverage.xml'
+                  CoverageThreshold  = $(COVERAGE_THRESHOLD)
+                }
+                ./.pipelines/scripts/Invoke-ModuleTests.ps1 @params
+
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        displayName: 'Publish Pester test results'
+        inputs:
+          failTaskOnFailedTests: true
+          testResultsFiles: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+          testResultsFormat: 'NUnit'
+          testRunTitle: 'Pester - $(moduleName)'
+
+      - task: PublishCodeCoverageResults@2
+        condition: succeededOrFailed()
+        displayName: 'Publish code coverage'
+        inputs:
+          summaryFileLocation: '$(Build.ArtifactStagingDirectory)/coverage.xml'
+
+  - job: Publish
+    displayName: 'Publish to Azure Artifacts'
+    dependsOn:
+      - Detect
+      - Validate
+    condition: >-
+      and(
+        succeeded(),
+        eq(dependencies.Detect.outputs['detect.hasModules'], 'true'),
+        ne(variables['System.PullRequest.IsFork'], 'True'),
+        or(
+          eq(variables['Build.Reason'], 'PullRequest'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/main')
+        )
+      )
+    strategy:
+      matrix: $[ dependencies.Detect.outputs['detect.moduleMatrix'] ]
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - pwsh: |
+          $prNumber = ''
+          if ('$(Build.Reason)' -eq 'PullRequest') {
+            # PullRequestNumber is set for GitHub PRs, PullRequestId for Azure Repos PRs.
+            $prNumber = '$(System.PullRequest.PullRequestNumber)'
+            if ($prNumber -notmatch '^\d+$') { $prNumber = '$(System.PullRequest.PullRequestId)' }
+          }
+          $version = ./.pipelines/scripts/Get-ModulePublishVersion.ps1 `
+            -ModulePath ./$(moduleName) -PullRequestNumber $prNumber -BuildId '$(Build.BuildId)' |
+            ConvertFrom-Json
+
+          $params = @{
+            ModulePath    = './$(moduleName)'
+            RepositoryUri = '$(FEED_URI)'
+            Token         = $env:SYSTEM_ACCESSTOKEN
+          }
+          if ($version.prereleaseLabel) { $params.PrereleaseLabel = $version.prereleaseLabel }
+          ./.pipelines/scripts/Publish-PSModule.ps1 @params
+        displayName: 'Publish $(moduleName)'
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - job: SmokeTest
+    displayName: 'Smoke test from feed'
+    dependsOn:
+      - Detect
+      - Publish
+    condition: and(succeeded(), eq(dependencies.Detect.outputs['detect.hasModules'], 'true'))
+    strategy:
+      matrix: $[ dependencies.Detect.outputs['detect.moduleMatrix'] ]
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - pwsh: |
+          $prNumber = ''
+          if ('$(Build.Reason)' -eq 'PullRequest') {
+            $prNumber = '$(System.PullRequest.PullRequestNumber)'
+            if ($prNumber -notmatch '^\d+$') { $prNumber = '$(System.PullRequest.PullRequestId)' }
+          }
+          $version = ./.pipelines/scripts/Get-ModulePublishVersion.ps1 `
+            -ModulePath ./$(moduleName) -PullRequestNumber $prNumber -BuildId '$(Build.BuildId)' |
+            ConvertFrom-Json
+
+          $params = @{
+            ModuleName    = '$(moduleName)'
+            Version       = $version.fullVersion
+            RepositoryUri = '$(FEED_URI)'
+            Token         = $env:SYSTEM_ACCESSTOKEN
+          }
+          ./.pipelines/scripts/Test-PublishedPSModule.ps1 @params
+        displayName: 'Install and import $(moduleName) from feed'
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
