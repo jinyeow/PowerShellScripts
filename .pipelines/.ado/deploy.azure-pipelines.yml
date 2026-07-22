@@ -37,7 +37,8 @@ stages:
 - stage: Deployment
   jobs:
   - job: deploy
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    # No branch gate: prereleases are published from the branch the run is
+    # queued on, which is not (and should not be) restricted to main.
     displayName: Powershell Modules Deployment
     steps:
     - checkout: none
