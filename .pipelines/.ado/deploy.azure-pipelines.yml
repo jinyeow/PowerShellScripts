@@ -122,7 +122,8 @@ stages:
 
           Write-Host "##[section]Install Module"
           $moduleName = "${{ variables.MODULE_NAME }}" #7
-          Install-Module -Name $moduleName -Repository $sourceName -Force -Credential $credential
+          # -AllowPrerelease so the smoke test can resolve prerelease publishes.
+          Install-Module -Name $moduleName -Repository $sourceName -Force -Credential $credential -AllowPrerelease
 
           if (-not (Get-Module -ListAvailable -Name $moduleName)) {
             Write-Error "Module [$moduleName] not imported."
