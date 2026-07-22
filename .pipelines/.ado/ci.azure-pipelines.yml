@@ -14,6 +14,12 @@ parameters:
 - name: azureServiceConnection
   type: string
   default: '<FILLME_AZURE_SERVICE_CONNECTION>'
+# Set true only for modules whose Pester tests need an authenticated Azure /
+# Microsoft Graph context (requires azureServiceConnection). The default runs
+# analysis, tests and packaging with no cloud authentication.
+- name: requiresAzureAuth
+  type: boolean
+  default: false
 # Defaults to the bundled SampleModule so the pipeline is runnable out of the
 # box; replace with your module name for real use.
 - name: moduleName
@@ -40,7 +46,7 @@ stages:
     - checkout: self
       displayName: '[Sparse] Checkout self'
       fetchDepth: 1
-      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }}
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Scripts/Utility
 
     - task: PowerShell@2
       displayName: 'PSScriptAnalyzer'
@@ -61,49 +67,42 @@ stages:
           }
           Invoke-ScriptAnalyzer @params
 
-    - task: AzurePowerShell@5
-      displayName: 'Run Pester Tests'
-      inputs:
-        azurePowerShellVersion: 'LatestVersion'
-        azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
-        pwsh: true
-        ScriptType: 'InlineScript'
-        workingDirectory: $(MODULE_NAME)
-        Inline:  |
-          $graphToken = (Get-AzAccessToken -Resource 'https://graph.microsoft.com').Token |
-            ConvertTo-SecureString -AsPlainText
-          Connect-MgGraph -AccessToken $graphToken -NoWelcome
+    # Default path: run tests with no cloud authentication.
+    - ${{ if ne(parameters.requiresAzureAuth, true) }}:
+      - task: PowerShell@2
+        displayName: 'Run Pester Tests'
+        inputs:
+          pwsh: true
+          targetType: 'inline'
+          script: |
+            $params = @{
+              ModulePath        = '$(MODULE_NAME)'
+              TestResultsPath   = '$(TEST_RESULTS)'
+              CoverageThreshold = $(CODE_COVERAGE_THRESHOLD)
+            }
+            ./Scripts/Utility/Invoke-ModuleTest.ps1 @params
 
-          # Install and import Pester if not already installed
-          $requiredVersion = '5.0.0'
-          $pesterModule = Get-Module -ListAvailable -Name Pester | Select-Object -First 1
-          if (-not ($pesterModule) -or ($pesterModule.Version -lt $requiredVersion)) {
-              Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
-          }
-          Import-Module Pester -MinimumVersion $requiredVersion -Force
+    # Opt-in path: modules whose tests need an authenticated Azure / Microsoft
+    # Graph context. Same test logic, wrapped in an Az-authenticated session.
+    - ${{ if eq(parameters.requiresAzureAuth, true) }}:
+      - task: AzurePowerShell@5
+        displayName: 'Run Pester Tests (Azure authenticated)'
+        inputs:
+          azurePowerShellVersion: 'LatestVersion'
+          azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+          pwsh: true
+          ScriptType: 'InlineScript'
+          Inline: |
+            $graphToken = (Get-AzAccessToken -Resource 'https://graph.microsoft.com').Token |
+              ConvertTo-SecureString -AsPlainText
+            Connect-MgGraph -AccessToken $graphToken -NoWelcome
 
-          $config = New-PesterConfiguration
-
-          # Test paths
-          $config.Run.Path = "./tests"
-          $config.Run.PassThru = $true
-
-          # Code Coverage settings
-          $config.CodeCoverage.Enabled = $true
-          $config.CodeCoverage.OutputFormat = 'JaCoCo'
-          $config.CodeCoverage.OutputPath = 'coverage.xml'
-          $config.CodeCoverage.Path = './src'
-          $config.CodeCoverage.CoveragePercentTarget = ${{ variables.CODE_COVERAGE_THRESHOLD }}
-
-          $config.Output.Verbosity = "Detailed"
-
-          # Test Result output
-          $config.TestResult.Enabled = $true
-          $config.Run.Exit = $true
-          $config.TestResult.OutputFormat = "NUnitXml"
-          $config.TestResult.OutputPath = "$(TEST_RESULTS)"
-          $config
-          Invoke-Pester -Configuration $config
+            $params = @{
+              ModulePath        = '$(MODULE_NAME)'
+              TestResultsPath   = '$(TEST_RESULTS)'
+              CoverageThreshold = $(CODE_COVERAGE_THRESHOLD)
+            }
+            ./Scripts/Utility/Invoke-ModuleTest.ps1 @params
 
     - task: PublishTestResults@2
       condition: succeededOrFailed()
@@ -163,18 +162,15 @@ stages:
         checkLatest: true
         versionSpec: '*'
 
-    - task: AzurePowerShell@5
+    - task: PowerShell@2
       displayName: 'nuget pack'
       inputs:
-        azurePowerShellVersion: 'LatestVersion'
-        azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
-        FailOnStandardError: true
         pwsh: true
-        ScriptType: 'InlineScript'
+        targetType: 'inline'
         workingDirectory: $(MODULE_NAME)
-        Inline:  |
+        script: |
           nuget pack "src/${{ variables.MODULE_NAME }}.nuspec" -BasePath ./src -OutputDirectory '$(Build.ArtifactStagingDirectory)'
-          ls $(Build.ArtifactStagingDirectory)
+          Get-ChildItem -Path '$(Build.ArtifactStagingDirectory)'
 
     - task: PublishPipelineArtifact@1
       inputs:
