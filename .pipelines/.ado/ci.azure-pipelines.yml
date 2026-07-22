@@ -14,10 +14,11 @@ parameters:
 - name: azureServiceConnection
   type: string
   default: '<FILLME_AZURE_SERVICE_CONNECTION>'
-# Placeholder default for the module to build; replace with your module name.
+# Defaults to the bundled SampleModule so the pipeline is runnable out of the
+# box; replace with your module name for real use.
 - name: moduleName
   type: string
-  default: '<FILLME_MODULE_NAME>'
+  default: 'SampleModule'
 - name: testResultsOutFile
   type: string
   default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
@@ -126,12 +127,12 @@ stages:
     - checkout: self
       displayName: '[Sparse] Checkout self'
       fetchDepth: 1
-      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Utility
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Scripts/Utility
 
     # Every branch except main gets a unique, lexically-sortable prerelease label
     # stamped onto the manifest, so each build publishes a distinct prerelease
-    # version (e.g. 1.2.0-prerelease0000000042). main is left untouched and
-    # publishes the plain ModuleVersion. New-NuspecFromPsd.ps1 reads this
+    # version (e.g. 0.1.0-build0000000042). main is left untouched and publishes
+    # the plain ModuleVersion. New-NuspecFromPsd.ps1 reads this
     # PrivateData.PSData.Prerelease field and appends it to the package version.
     - pwsh: |
         $moduleName = '${{ variables.MODULE_NAME }}'
@@ -143,7 +144,7 @@ stages:
           # ModuleVersion must be 3-part and the label ASCII-alphanumeric starting
           # with a letter (SemVer v1 / PowerShellGet: no '.', no '+'). Zero-pad the
           # build id so the label sorts in build order.
-          $label = 'prerelease{0:d10}' -f [long]'$(Build.BuildId)'
+          $label = 'build{0:d10}' -f [long]'$(Build.BuildId)'
           Write-Host "Non-main branch: stamping prerelease label '$label' on $manifestPath"
           Update-ModuleManifest -Path $manifestPath -Prerelease $label
         }
@@ -151,7 +152,7 @@ stages:
 
     - pwsh: |
         $moduleName = '${{ variables.MODULE_NAME }}'
-        ./Utility/New-NuspecFromPsd.ps1 -ManifestPath "${moduleName}/src/${moduleName}.psd1" -DestinationFolder "${moduleName}/src"
+        ./Scripts/Utility/New-NuspecFromPsd.ps1 -ManifestPath "${moduleName}/src/${moduleName}.psd1" -DestinationFolder "${moduleName}/src"
 
         Write-Host "##[section]Reading generated nuspec:"
         Get-Content "${moduleName}/src/${moduleName}.nuspec"
