@@ -1,4 +1,10 @@
-# TODO: check all the FILLME and Codedapper for the Artifact feed name. Update as required.
+# Publishes a packed PowerShell module to an Azure Artifacts feed.
+# Manual-run only: it is never triggered by commits or PRs — queue it by hand
+# when you want to promote a build. Replace the <FILLME_...> placeholders in the
+# variables block below; the project is derived from a built-in variable.
+trigger: none
+pr: none
+
 parameters:
 - name: additionalSparseCheckoutDirectories
   type: string
@@ -12,8 +18,14 @@ parameters:
   default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
 
 variables:
-  ARTIFACT_FEED_NAME: 'Codedapper.DevOps.PowerShell'
-  ARTIFACT_FEED: '<FILLME>/${{ variables.ARTIFACT_FEED_NAME }}' # TODO
+  # Placeholder — replace with your Azure DevOps organization name
+  # (the '{org}' segment in https://dev.azure.com/{org}).
+  ADO_ORGANIZATION: '<FILLME_ADO_ORGANIZATION>'
+  # Placeholder — the Azure Artifacts feed name to publish to.
+  ARTIFACT_FEED_NAME: '<FILLME_ARTIFACT_FEED_NAME>'
+  # NuGet v3 feed source, assembled from the org placeholder above and the
+  # built-in project id.
+  ARTIFACT_FEED_URI: 'https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(System.TeamProjectId)/_packaging/$(ARTIFACT_FEED_NAME)/nuget/v3/index.json'
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CI_IDENTIFIER: 'CI'
   CODE_COVERAGE_THRESHOLD: 10
@@ -49,19 +61,19 @@ stages:
           $feedName = "${{ variables.ARTIFACT_FEED_NAME }}"
           $moduleName = "${{ variables.MODULE_NAME }}"
           $pkg = (Get-ChildItem *.nupkg).Name
-          $sourceUri = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/$($feedName)/nuget/v3/index.json" # TODO
+          $sourceUri = "$(ARTIFACT_FEED_URI)"
 
           Write-Debug $sourceUri
           Write-Debug $pkg
 
           $nugetAddParams = @(
-            '-Name', 'Codedapper.DevOps.PowerShell',
+            '-Name', $feedName,
             '-Source', $sourceUri,
             '-username', $accessToken,
             '-password', $accessToken
           )
           nuget source add @nugetAddParams
-          nuget push -Source "Codedapper.DevOps.PowerShell" -ApiKey AzureDevOpsService  "./$pkg" -SkipDuplicate
+          nuget push -Source $feedName -ApiKey AzureDevOpsService  "./$pkg" -SkipDuplicate
         workingDirectory: '$(Pipeline.Workspace)/${{ variables.CI_IDENTIFIER }}/${{ variables.MODULE_NAME }}'
 
 - stage: PostDeploy
@@ -93,8 +105,8 @@ stages:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 #1
           $token = $env:SYSTEM_ACCESSTOKEN | ConvertTo-SecureString -AsPlainText -Force #2
           $credential = New-Object System.Management.Automation.PSCredential($env:SYSTEM_ACCESSTOKEN, $token) #3
-          $sourceName = "Codedapper.DevOps.PowerShell" #4
-          $feedLocation = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/Codedapper.DevOps.PowerShell/nuget/v2" #5 #TODO
+          $sourceName = "${{ variables.ARTIFACT_FEED_NAME }}" #4
+          $feedLocation = "https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(System.TeamProjectId)/_packaging/$(ARTIFACT_FEED_NAME)/nuget/v2" #5
 
           Write-Host "##[section]Register Package Source"
           $params = @{

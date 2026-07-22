@@ -1,17 +1,28 @@
+# Prerelease CI: analyzes, tests, packs the module and publishes the build
+# artifact. Runs automatically on every commit to any branch.
+trigger:
+  branches:
+    include:
+      - '*'
+
 parameters:
 - name: additionalSparseCheckoutDirectories
   type: string
   default: ''
+# Placeholder default so the CI trigger can run unattended; replace with your
+# Azure service connection name (or override at queue time).
 - name: azureServiceConnection
   type: string
+  default: '<FILLME_AZURE_SERVICE_CONNECTION>'
+# Placeholder default for the module to build; replace with your module name.
 - name: moduleName
   type: string
+  default: '<FILLME_MODULE_NAME>'
 - name: testResultsOutFile
   type: string
   default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
 
 variables:
-  ARTIFACT_FEED: '<FILLME>/Hollard.DevOps.PowerShell' # TODO
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CODE_COVERAGE_THRESHOLD: 10
   MODULE_NAME: '${{ parameters.moduleName }}'
