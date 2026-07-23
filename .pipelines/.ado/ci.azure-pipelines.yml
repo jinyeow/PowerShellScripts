@@ -33,7 +33,7 @@ variables:
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CODE_COVERAGE_THRESHOLD: 10
   MODULE_NAME: '${{ parameters.moduleName }}'
-  SPARSE_CHECKOUT_DIRECTORIES: '${{ variables.MODULE_NAME }} ${{ parameters.additionalSparseCheckoutDirectories }} .vscode'
+  SPARSE_CHECKOUT_DIRECTORIES: '${{ variables.MODULE_NAME }} ${{ parameters.additionalSparseCheckoutDirectories }} .vscode Scripts/Utility'
   TEST_RESULTS: '${{ parameters.testResultsOutFile }}'
 
 stages:
@@ -46,7 +46,7 @@ stages:
     - checkout: self
       displayName: '[Sparse] Checkout self'
       fetchDepth: 1
-      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Scripts/Utility
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }}
 
     - task: PowerShell@2
       displayName: 'PSScriptAnalyzer'
@@ -126,7 +126,7 @@ stages:
     - checkout: self
       displayName: '[Sparse] Checkout self'
       fetchDepth: 1
-      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }} Scripts/Utility
+      sparseCheckoutDirectories: ${{ variables.SPARSE_CHECKOUT_DIRECTORIES }}
 
     # Every branch except main gets a unique, lexically-sortable prerelease label
     # stamped onto the manifest, so each build publishes a distinct prerelease
@@ -140,9 +140,17 @@ stages:
         if ('$(Build.SourceBranch)' -eq 'refs/heads/main') {
           Write-Host "main branch: publishing release version (no prerelease label)."
         } else {
-          # ModuleVersion must be 3-part and the label ASCII-alphanumeric starting
-          # with a letter (SemVer v1 / PowerShellGet: no '.', no '+'). Zero-pad the
-          # build id so the label sorts in build order.
+          # PowerShellGet requires a 3-part base version (Major.Minor.Build) to
+          # carry a prerelease label, so validate it up front and fail early with a
+          # clear message rather than producing an unresolvable package downstream.
+          $moduleVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
+          if ($moduleVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "ModuleVersion '$moduleVersion' must be 3-part (Major.Minor.Build) to carry a prerelease label."
+          }
+
+          # The label must be ASCII-alphanumeric starting with a letter (SemVer v1 /
+          # PowerShellGet: no '.', no '+'). Zero-pad the build id so it sorts in
+          # build order.
           $label = 'build{0:d10}' -f [long]'$(Build.BuildId)'
           Write-Host "Non-main branch: stamping prerelease label '$label' on $manifestPath"
           Update-ModuleManifest -Path $manifestPath -Prerelease $label
@@ -178,7 +186,11 @@ stages:
         artifact: "${{ variables.MODULE_NAME }}.nupkg"
 
   - job: PublishBuildArtifact
-    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), and(startsWith(variables['Build.SourceBranch'], 'refs/pull/'), endsWith(variables['Build.SourceBranch'], '/merge'))))
+    # Publish on every branch (no main/PR-merge gate): the manual deploy pipeline
+    # downloads this named build artifact, and prereleases are deployed from
+    # feature branches, so the artifact must exist there too. Publishing here is
+    # cheap and does not touch the feed — that remains a manual deploy step.
+    condition: succeeded()
     dependsOn:
       - Test
       - Build

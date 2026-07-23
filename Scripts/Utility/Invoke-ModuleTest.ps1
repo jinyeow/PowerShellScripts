@@ -50,7 +50,9 @@ Import-Module -Name Pester -MinimumVersion $requiredVersion -Force
 $config = New-PesterConfiguration
 $config.Run.Path = Join-Path -Path $ModulePath -ChildPath 'tests'
 $config.Run.PassThru = $true
-$config.Run.Exit = $true
+# Return the result object instead of exiting inline, so both test failures and
+# coverage can be enforced as gates below.
+$config.Run.Exit = $false
 
 $config.CodeCoverage.Enabled = $true
 $config.CodeCoverage.OutputFormat = 'JaCoCo'
@@ -64,4 +66,15 @@ $config.TestResult.OutputPath = $TestResultsPath
 
 $config.Output.Verbosity = 'Detailed'
 
-Invoke-Pester -Configuration $config
+$result = Invoke-Pester -Configuration $config
+
+if ($result.FailedCount -gt 0) {
+    throw "$($result.FailedCount) test(s) failed."
+}
+
+# CoveragePercentTarget only reports; enforce it here so the threshold is a real
+# gate rather than a display value.
+$coveragePercent = [double] $result.CodeCoverage.CoveragePercent
+if ($coveragePercent -lt $CoverageThreshold) {
+    throw ('Code coverage {0:N2}% is below the required threshold of {1}%.' -f $coveragePercent, $CoverageThreshold)
+}

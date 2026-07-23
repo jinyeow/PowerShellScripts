@@ -23,9 +23,11 @@ variables:
   ADO_ORGANIZATION: '<FILLME_ADO_ORGANIZATION>'
   # Placeholder — the Azure Artifacts feed name to publish to.
   ARTIFACT_FEED_NAME: '<FILLME_ARTIFACT_FEED_NAME>'
-  # NuGet v3 feed source, assembled from the org placeholder above and the
-  # built-in project id.
-  ARTIFACT_FEED_URI: 'https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(System.TeamProjectId)/_packaging/$(ARTIFACT_FEED_NAME)/nuget/v3/index.json'
+  # Base feed URL (host/org/project/feed), assembled from the org placeholder
+  # above and the built-in project id. The v2 and v3 endpoints both hang off it.
+  ARTIFACT_FEED_BASE: 'https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(System.TeamProjectId)/_packaging/$(ARTIFACT_FEED_NAME)'
+  # NuGet v3 feed source used to push the package.
+  ARTIFACT_FEED_URI: '$(ARTIFACT_FEED_BASE)/nuget/v3/index.json'
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CI_IDENTIFIER: 'CI'
   CODE_COVERAGE_THRESHOLD: 10
@@ -37,8 +39,9 @@ stages:
 - stage: Deployment
   jobs:
   - job: deploy
-    # No branch gate: prereleases are published from the branch the run is
-    # queued on, which is not (and should not be) restricted to main.
+    # No branch gate: the deploy publishes whatever was packed for the queued
+    # branch — a release from main, a prerelease from any other branch — so it is
+    # intentionally not restricted to main.
     displayName: Powershell Modules Deployment
     steps:
     - checkout: none
@@ -107,7 +110,7 @@ stages:
           $token = $env:SYSTEM_ACCESSTOKEN | ConvertTo-SecureString -AsPlainText -Force #2
           $credential = New-Object System.Management.Automation.PSCredential($env:SYSTEM_ACCESSTOKEN, $token) #3
           $sourceName = "${{ variables.ARTIFACT_FEED_NAME }}" #4
-          $feedLocation = "https://pkgs.dev.azure.com/$(ADO_ORGANIZATION)/$(System.TeamProjectId)/_packaging/$(ARTIFACT_FEED_NAME)/nuget/v2" #5
+          $feedLocation = "$(ARTIFACT_FEED_BASE)/nuget/v2" #5
 
           Write-Host "##[section]Register Package Source"
           $params = @{

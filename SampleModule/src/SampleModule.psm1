@@ -10,7 +10,11 @@
 #>
 
 $publicPath = Join-Path -Path $PSScriptRoot -ChildPath 'Public'
-$publicFunctions = Get-ChildItem -Path $publicPath -Filter '*.ps1' -ErrorAction SilentlyContinue
+if (-not (Test-Path -Path $publicPath)) {
+    throw "Public directory not found at '$publicPath'."
+}
+
+$publicFunctions = Get-ChildItem -Path $publicPath -Filter '*.ps1'
 
 foreach ($function in $publicFunctions) {
     . $function.FullName
