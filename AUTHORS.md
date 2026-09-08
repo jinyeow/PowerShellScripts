@@ -6,7 +6,7 @@ This file acknowledges the contributors to the PowerShellScripts project.
 
 **Jin-Yeow Puah** ([@jinyeow](https://github.com/jinyeow))
 - Project creator and primary maintainer
-- Core module development
+- Script development
 - Repository architecture and documentation
 
 ## Contributors
@@ -32,7 +32,7 @@ Interested in contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for guideline
 
 Special thanks to:
 - The PowerShell community for modules and best practices
-- Microsoft for PowerShell, Azure CLI, and Microsoft Graph
+- Microsoft for PowerShell and the Azure DevOps REST API
 - All users who have reported issues and provided feedback
 
 ---
