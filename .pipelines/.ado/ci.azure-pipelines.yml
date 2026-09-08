@@ -11,7 +11,7 @@ parameters:
   default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
 
 variables:
-  ARTIFACT_FEED: '<FILLME>/Hollard.DevOps.PowerShell' # TODO
+  ARTIFACT_FEED: '<FILLME>/<FILLME>.DevOps.PowerShell' # TODO
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CODE_COVERAGE_THRESHOLD: 10
   MODULE_NAME: '${{ parameters.moduleName }}'

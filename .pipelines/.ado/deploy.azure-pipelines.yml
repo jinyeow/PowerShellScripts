@@ -1,4 +1,4 @@
-# TODO: check all the FILLME and Codedapper for the Artifact feed name. Update as required.
+# TODO: check all the FILLME and <FILLME> for the Artifact feed name. Update as required.
 parameters:
 - name: additionalSparseCheckoutDirectories
   type: string
@@ -12,7 +12,7 @@ parameters:
   default: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
 
 variables:
-  ARTIFACT_FEED_NAME: 'Codedapper.DevOps.PowerShell'
+  ARTIFACT_FEED_NAME: '<FILLME>.DevOps.PowerShell'
   ARTIFACT_FEED: '<FILLME>/${{ variables.ARTIFACT_FEED_NAME }}' # TODO
   AZURE_SERVICE_CONNECTION: '${{ parameters.azureServiceConnection }}'
   CI_IDENTIFIER: 'CI'
@@ -55,13 +55,13 @@ stages:
           Write-Debug $pkg
 
           $nugetAddParams = @(
-            '-Name', 'Codedapper.DevOps.PowerShell',
+            '-Name', '<FILLME>.DevOps.PowerShell',
             '-Source', $sourceUri,
             '-username', $accessToken,
             '-password', $accessToken
           )
           nuget source add @nugetAddParams
-          nuget push -Source "Codedapper.DevOps.PowerShell" -ApiKey AzureDevOpsService  "./$pkg" -SkipDuplicate
+          nuget push -Source "<FILLME>.DevOps.PowerShell" -ApiKey AzureDevOpsService  "./$pkg" -SkipDuplicate
         workingDirectory: '$(Pipeline.Workspace)/${{ variables.CI_IDENTIFIER }}/${{ variables.MODULE_NAME }}'
 
 - stage: PostDeploy
@@ -93,8 +93,8 @@ stages:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 #1
           $token = $env:SYSTEM_ACCESSTOKEN | ConvertTo-SecureString -AsPlainText -Force #2
           $credential = New-Object System.Management.Automation.PSCredential($env:SYSTEM_ACCESSTOKEN, $token) #3
-          $sourceName = "Codedapper.DevOps.PowerShell" #4
-          $feedLocation = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/Codedapper.DevOps.PowerShell/nuget/v2" #5 #TODO
+          $sourceName = "<FILLME>.DevOps.PowerShell" #4
+          $feedLocation = "https://pkgs.dev.azure.com/<FILLME>/$(System.TeamProjectId)/_packaging/<FILLME>.DevOps.PowerShell/nuget/v2" #5 #TODO
 
           Write-Host "##[section]Register Package Source"
           $params = @{
