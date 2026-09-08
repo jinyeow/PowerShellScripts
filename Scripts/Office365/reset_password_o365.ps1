@@ -15,6 +15,7 @@ Connect-MsolService
 
 $userName = Read-Host -Prompt 'Email'
 $User     = Get-MsolUser -SearchString $userName
+$password = Read-Host -Prompt 'New password' -AsSecureString
 
 # If search returns 1 object; print UPN, ask for confirmation to proceed
 # If search returns > 1 object;
@@ -25,5 +26,5 @@ $User     = Get-MsolUser -SearchString $userName
 Set-MsolUserPassword `
     -userPrincipalName $User.UserPrincipalName `
     -NewPassword $password `
-    -ForceChangePassword $false
+    -ForceChangePassword $false `
     -WhatIf
