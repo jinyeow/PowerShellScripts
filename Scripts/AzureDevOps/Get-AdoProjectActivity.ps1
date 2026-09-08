@@ -1,4 +1,5 @@
 #Requires -Version 7.0
+#Requires -Modules Az.Accounts
 
 <#
     .SYNOPSIS
@@ -7,11 +8,11 @@
     sequenced onto dormant projects before busy ones.
 
     .DESCRIPTION
-    This is a read-only, one-off sequencing helper for the PBI 650872 rollout, not module
-    code - it is run interactively by an engineer and makes no writes of any kind.
+    This is a read-only, one-off sequencing helper for a project-wide branch-policy rollout,
+    not module code - it is run interactively by an engineer and makes no writes of any kind.
 
-    Activity definition. The three policies Set-AdoBranchPolicyProject applies (minimum
-    reviewers, work item linking, comment resolution) are blocking policies on the default
+    Activity definition. The three policies the rollout applies (minimum reviewers, work
+    item linking, comment resolution) are blocking policies on the default
     branch, so they do two things: they gate pull-request completion, and they make the
     default branch reject direct pushes. Both effects are measured:
 
@@ -60,12 +61,12 @@
     name containing spaces or other URL-significant characters needs no escaping.
 
     .PARAMETER Organization
-    Azure DevOps organisation URL, e.g. https://dev.azure.com/HollardInsuranceRetail.
+    Azure DevOps organisation URL, e.g. https://dev.azure.com/{org}.
 
     .PARAMETER AccessToken
     Optional bearer token for the Azure DevOps REST API. When omitted, a token is acquired
     via Get-AzAccessToken against the Azure DevOps resource ID, matching the pattern used
-    by Set-AdoBranchPolicyProject/Get-AdoBranchPolicyStatus.
+    by the branch-policy tooling this rollout relies on.
 
     .PARAMETER PullRequestSampleSize
     Number of most-recent pull requests read per project when looking for the newest
@@ -109,39 +110,9 @@ param(
     [int] $MaxProjectPages = 50
 )
 
-. "$PSScriptRoot/../src/Private/Invoke-AdoRestMethodWithRetry.ps1"
-. "$PSScriptRoot/../src/Private/Get-AdoBranchPolicyEligibleRepository.ps1"
-
-function ConvertTo-AdoUtcDateTime {
-    <#
-        .SYNOPSIS
-        Normalises an Azure DevOps date-time field to UTC, whether Invoke-RestMethod handed
-        it back as a string or as an already-parsed DateTime.
-    #>
-    [CmdletBinding()]
-    [OutputType([System.Nullable[datetime]])]
-    param(
-        [Parameter(Mandatory = $false)]
-        [object] $Value
-    )
-
-    if ($null -eq $Value) {
-        return $null
-    }
-    if ($Value -is [datetime]) {
-        return ([datetime]$Value).ToUniversalTime()
-    }
-    $text = [string]$Value
-    if (-not $text) {
-        return $null
-    }
-    $parsed = [datetime]::Parse(
-        $text,
-        [cultureinfo]::InvariantCulture,
-        [System.Globalization.DateTimeStyles]::RoundtripKind
-    )
-    return $parsed.ToUniversalTime()
-}
+. "$PSScriptRoot/Private/Invoke-AdoRestMethodWithRetry.ps1"
+. "$PSScriptRoot/Private/Get-AdoBranchPolicyEligibleRepository.ps1"
+. "$PSScriptRoot/Private/ConvertTo-AdoUtcDateTime.ps1"
 
 function Get-AdoOrganizationProject {
     <#
@@ -150,10 +121,11 @@ function Get-AdoOrganizationProject {
         state, lastUpdateTime), not just the names.
 
         .DESCRIPTION
-        Uses $top/$skip rather than the header-borne continuation token, matching
-        Get-AdoOrganizationProjectName. That module helper returns [string[]] names only,
-        which discards the id, state and lastUpdateTime this report needs, so the paging
-        loop is repeated here rather than the helper being reused.
+        Uses $top/$skip rather than the header-borne continuation token, matching the
+        organisation-project-name module helper elsewhere in this toolset. That helper
+        returns [string[]] names only, which discards the id, state and lastUpdateTime
+        this report needs, so the paging loop is repeated here rather than the helper
+        being reused.
     #>
     [CmdletBinding()]
     [OutputType([object[]])]
@@ -279,8 +251,8 @@ function Get-AdoRepositoryListLastPushUtc {
     )
 
     $latest = $null
-    foreach ($repository in $Repository) {
-        $pushUri = "$Organization/_apis/git/repositories/$($repository.id)/pushes" +
+    foreach ($repo in $Repository) {
+        $pushUri = "$Organization/_apis/git/repositories/$($repo.id)/pushes" +
         "?api-version=7.1&`$top=1"
         $response = Invoke-AdoRestMethodWithRetry -Parameters @{
             Uri = $pushUri

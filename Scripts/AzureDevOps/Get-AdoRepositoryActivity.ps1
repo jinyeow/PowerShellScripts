@@ -1,13 +1,14 @@
 #Requires -Version 7.0
+#Requires -Modules Az.Accounts
 
 <#
     .SYNOPSIS
     Reports per-repository push activity and main pusher(s) for one Azure DevOps project,
-    so a large project held out of the PBI 650872 branch-policy rollout can be judged repo
+    so a large project held out of a project-wide branch-policy rollout can be judged repo
     by repo instead of on a single project-level aggregate.
 
     .DESCRIPTION
-    This is a read-only, one-off helper for the PBI 650872 rollout, not module code - it is
+    This is a read-only, one-off helper for that rollout, not module code - it is
     run interactively by an engineer and makes no writes of any kind. It is the per-repo
     counterpart to Get-AdoProjectActivity.ps1, which classifies whole projects; that script
     answers "which projects are safe to apply to next", this one answers "inside one held
@@ -28,8 +29,8 @@
     repository, so a project with N repositories costs N calls plus one repository listing
     and one project listing. There is no pagination trick that collapses them.
 
-    Disabled repositories are INCLUDED, unlike Get-AdoBranchPolicyEligibleRepository, which
-    filters them out. For a "is this project winding down" judgement a disabled repository
+    Disabled repositories are INCLUDED, unlike the branch-policy eligibility check elsewhere
+    in this toolset, which filters them out. For a "is this project winding down" judgement a disabled repository
     is evidence, not noise, so the raw Repositories - List response is used and isDisabled
     is carried as a column. This means RepositoryCount here can exceed the count the
     branch-policy audit reports for the same project. A disabled repository usually cannot
@@ -55,7 +56,7 @@
     $top ceiling can be checked against the requested value on a real run instead of assumed.
 
     .PARAMETER Organization
-    Azure DevOps organisation URL, e.g. https://dev.azure.com/HollardInsuranceRetail.
+    Azure DevOps organisation URL, e.g. https://dev.azure.com/{org}.
 
     .PARAMETER ProjectName
     Name of the project to report on. Resolved to a project ID before any project-scoped
@@ -64,7 +65,7 @@
     .PARAMETER AccessToken
     Optional bearer token for the Azure DevOps REST API. When omitted, a token is acquired
     via Get-AzAccessToken against the Azure DevOps resource ID, matching the pattern used by
-    Get-AdoProjectActivity.ps1 and Set-AdoBranchPolicyProject.
+    Get-AdoProjectActivity.ps1 and the branch-policy tooling this rollout relies on.
 
     .PARAMETER PushSampleSize
     Number of most-recent pushes read per repository. Pushes come back newest-first, so this
@@ -81,11 +82,11 @@
     ReturnedPushCount, SampleWindowDays, PushesPerDay, Status, ErrorMessage.
 
     .EXAMPLE
-    ./Get-AdoRepositoryActivity.ps1 -ProjectName 'CBA Historical Pricing' -Verbose |
+    ./Get-AdoRepositoryActivity.ps1 -ProjectName 'Contoso Historical Pricing' -Verbose |
         Format-Table -AutoSize
 
     .EXAMPLE
-    ./Get-AdoRepositoryActivity.ps1 -ProjectName 'CBA Historical Pricing' -OutFile ./cba-repo-activity.csv
+    ./Get-AdoRepositoryActivity.ps1 -ProjectName 'Contoso Historical Pricing' -OutFile ./repo-activity.csv
 #>
 [CmdletBinding()]
 param(
@@ -105,38 +106,8 @@ param(
     [string] $OutFile
 )
 
-. "$PSScriptRoot/../src/Private/Invoke-AdoRestMethodWithRetry.ps1"
-
-function ConvertTo-AdoUtcDateTime {
-    <#
-        .SYNOPSIS
-        Normalises an Azure DevOps date-time field to UTC, whether Invoke-RestMethod handed
-        it back as a string or as an already-parsed DateTime.
-    #>
-    [CmdletBinding()]
-    [OutputType([System.Nullable[datetime]])]
-    param(
-        [Parameter(Mandatory = $false)]
-        [object] $Value
-    )
-
-    if ($null -eq $Value) {
-        return $null
-    }
-    if ($Value -is [datetime]) {
-        return ([datetime]$Value).ToUniversalTime()
-    }
-    $text = [string]$Value
-    if (-not $text) {
-        return $null
-    }
-    $parsed = [datetime]::Parse(
-        $text,
-        [cultureinfo]::InvariantCulture,
-        [System.Globalization.DateTimeStyles]::RoundtripKind
-    )
-    return $parsed.ToUniversalTime()
-}
+. "$PSScriptRoot/Private/Invoke-AdoRestMethodWithRetry.ps1"
+. "$PSScriptRoot/Private/ConvertTo-AdoUtcDateTime.ps1"
 
 function Resolve-AdoProjectId {
     <#
