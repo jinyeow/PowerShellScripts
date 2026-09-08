@@ -27,7 +27,7 @@ New-NanoServerImage -MediaPath <path> `
                     -DeploymentType <Host|Guest>
                     -Edition <Standard|Datacenter>
                     -ComputerName <name>
-                    -AdministratorPassword (ConvertTo-SecureString -String <string> -AsPlainText -Force)
+                    -AdministratorPassword (Read-Host -AsSecureString -Prompt 'Enter administrator password')
 
 # Create and start VM
 New-VM -Name <name> `
@@ -48,7 +48,7 @@ New-NanoServerImage -MediaPath <D:> `
                     -Ipv4Gateway <gateway> `
                     -Ipv4Dns ("<dns1>","<dns2>") `
                     -Package Microsoft-NanoServer-IIS-Package `
-                    -AdministratorPassword (ConvertTo-SecureString -String 'Pa$$w0rd' -AsPlainText -Force)
+                    -AdministratorPassword (Read-Host -AsSecureString -Prompt 'Enter administrator password')
 
 # View available packages
 Get-NanoServerPackage -MediaPath <path\to\media>
